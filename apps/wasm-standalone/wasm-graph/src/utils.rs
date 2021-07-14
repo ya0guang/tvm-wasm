@@ -28,9 +28,12 @@ pub unsafe fn load_input(in_addr: i32, in_size: usize) -> Tensor {
     for i in 0..in_size {
         data_vec.push(ptr::read(in_addr.offset(i as isize)));
     }
-    let input: Tensor = serde_json::from_slice(&data_vec).unwrap();
+    println!("DEBUG: VOID");
 
-    input
+    println!("DEBUG: wasm_graph load_input data_vec: {:?}", &data_vec[95000..95010]);
+    let input = serde_json::from_slice(&data_vec);
+
+    input.unwrap()
 }
 
 pub unsafe fn store_output(out_addr: i32, output: Tensor) -> usize {

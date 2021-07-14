@@ -85,6 +85,8 @@ impl GraphExecutor {
 
         self.wasm_addr = wasm_addr as i32;
         self.input_size = in_size as i32;
+        println!("DEBUG, input addr: {:?}, size: {:?}", self.wasm_addr, self.input_size);
+
         Ok(())
     }
 

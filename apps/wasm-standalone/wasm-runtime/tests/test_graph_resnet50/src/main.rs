@@ -23,6 +23,9 @@ use ndarray::Array;
 use std::{collections::HashMap, env, fs::File, io::BufReader};
 use wasm_runtime::{GraphExecutor, Tensor};
 
+// #[macro_use]
+extern crate serde_derive;
+
 const IMG_HEIGHT: usize = 224;
 const IMG_WIDTH: usize = 224;
 
@@ -80,6 +83,14 @@ fn main() {
 
     let mut graph_exec = GraphExecutor::new();
     graph_exec.instantiate(wasm_graph_file).unwrap();
+
+    // // little experiment
+    let json_ser = serde_json::to_vec(&input).unwrap();
+    // let json_de: Tensor = serde_json::from_slice(&json_ser).unwrap();
+
+    println!("DEBUG: vector: {:?}", &json_ser[95000..95010]);
+        
+
     graph_exec.set_input(input).unwrap();
     graph_exec.run().unwrap();
     let output: Tensor = match graph_exec.get_output() {
