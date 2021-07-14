@@ -89,7 +89,6 @@ fn main() {
     // let json_de: Tensor = serde_json::from_slice(&json_ser).unwrap();
 
     println!("DEBUG: vector: {:?}", &json_ser[95000..95010]);
-        
 
     graph_exec.set_input(input).unwrap();
     graph_exec.run().unwrap();

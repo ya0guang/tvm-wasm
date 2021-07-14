@@ -19,7 +19,8 @@
 
 use anyhow::Result;
 use wasmtime::*;
-use wasmtime_wasi::{Wasi, WasiCtx};
+use wasmtime_wasi::sync::WasiCtxBuilder;
+use wasmtime_wasi::WasiCtx;
 
 use super::Tensor;
 
@@ -27,6 +28,7 @@ pub struct GraphExecutor {
     pub(crate) wasm_addr: i32,
     pub(crate) input_size: i32,
     pub(crate) output_size: i32,
+    pub(crate) store: Option<Store<WasiCtx>>,
     pub(crate) instance: Option<Instance>,
 }
 
@@ -37,25 +39,34 @@ impl GraphExecutor {
             wasm_addr: 0,
             input_size: 0,
             output_size: 0,
+            store: None,
             instance: None,
         }
     }
 
     pub fn instantiate(&mut self, wasm_graph_file: String) -> Result<()> {
-        let engine = Engine::new(Config::new().wasm_simd(true));
-        let store = Store::new(&engine);
+        let engine = Engine::new(Config::new().wasm_simd(true)).unwrap();
+        // let store = Store::new(&engine);
 
         // First set up our linker which is going to be linking modules together. We
         // want our linker to have wasi available, so we set that up here as well.
-        let mut linker = Linker::new(&store);
+        // let mut linker = Linker::new(&store);
+        let mut linker = Linker::new(&engine);
+        wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
         // Create an instance of `Wasi` which contains a `WasiCtx`. Note that
         // `WasiCtx` provides a number of ways to configure what the target program
         // will have access to.
-        let wasi = Wasi::new(&store, WasiCtx::new(std::env::args())?);
-        wasi.add_to_linker(&mut linker)?;
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdio()
+            .inherit_args()?
+            .build();
+        // let wasi = Wasi::new(&store, WasiCtx::new(std::env::args())?);
+        let mut store = Store::new(&engine, wasi);
+        // wasi.add_to_linker(&mut linker)?;
 
-        let module = Module::from_file(&store, &wasm_graph_file)?;
-        self.instance = Some(linker.instantiate(&module)?);
+        let module = Module::from_file(&engine, &wasm_graph_file)?;
+        self.instance = Some(linker.instantiate(&mut store, &module)?);
+        self.store = Some(store);
 
         Ok(())
     }
@@ -65,27 +76,31 @@ impl GraphExecutor {
             .instance
             .as_ref()
             .unwrap()
-            .get_memory("memory")
+            .get_memory(self.store.as_mut().unwrap(), "memory")
             .ok_or_else(|| anyhow::format_err!("failed to find `memory` export"))?;
 
         // Specify the wasm address to access the wasm memory.
-        let wasm_addr = memory.data_size();
+        let wasm_addr = memory.data_size(self.store.as_mut().unwrap());
         // Serialize the data into a JSON string.
         let in_data = serde_json::to_vec(&input_data)?;
         let in_size = in_data.len();
         // Grow up memory size according to in_size to avoid memory leak.
-        memory.grow((in_size >> 16) as u32 + 1)?;
+        memory.grow(self.store.as_mut().unwrap(), (in_size >> 16) as u32 + 1)?;
 
         // Insert the input data into wasm memory.
-        for i in 0..in_size {
-            unsafe {
-                memory.data_unchecked_mut()[wasm_addr + i] = *in_data.get(i).unwrap();
-            }
-        }
+        // for i in 0..in_size {
+        //     unsafe {
+        //         memory.data_unchecked_mut()[wasm_addr + i] = *in_data.get(i).unwrap();
+        //     }
+        // }
+        memory.write(self.store.as_mut().unwrap(), wasm_addr, &in_data);
 
         self.wasm_addr = wasm_addr as i32;
         self.input_size = in_size as i32;
-        println!("DEBUG, input addr: {:?}, size: {:?}", self.wasm_addr, self.input_size);
+        println!(
+            "DEBUG, input addr: {:?}, size: {:?}",
+            self.wasm_addr, self.input_size
+        );
 
         Ok(())
     }
@@ -96,11 +111,14 @@ impl GraphExecutor {
             .instance
             .as_ref()
             .unwrap()
-            .get_func("run")
-            .ok_or_else(|| anyhow::format_err!("failed to find `run` function export!"))?
-            .get2::<i32, i32, i32>()?;
+            .get_func(self.store.as_mut().unwrap(), "run")
+            .ok_or_else(|| anyhow::format_err!("failed to find `run` function export!"))?;
+            // .wrap2_async::<i32, i32, i32>(self.store.unwrap())?;
+            // .get2::<i32, i32, i32>()?;
 
-        let out_size = run(self.wasm_addr, self.input_size)?;
+        let params = [Val::I32(self.wasm_addr), Val::I32(self.input_size)];
+        let out_size = run.call(self.store.as_mut().unwrap(), &params[..])?;
+        let out_size = (*out_size)[0].unwrap_i32();
         if out_size == 0 {
             panic!("graph run failed!");
         }
@@ -109,18 +127,22 @@ impl GraphExecutor {
         Ok(())
     }
 
-    pub fn get_output(&self) -> Result<Tensor> {
+    pub fn get_output(&mut self) -> Result<Tensor> {
         let memory = self
             .instance
             .as_ref()
             .unwrap()
-            .get_memory("memory")
+            .get_memory(self.store.as_mut().unwrap(), "memory")
             .ok_or_else(|| anyhow::format_err!("failed to find `memory` export"))?;
 
-        let out_data = unsafe {
-            &memory.data_unchecked()[self.wasm_addr as usize..][..self.output_size as usize]
-        };
-        let out_vec: Tensor = serde_json::from_slice(out_data).unwrap();
+        let mut out_data = vec![0 as u8; self.output_size as _];
+        memory.read(self.store.as_mut().unwrap(), self.wasm_addr as _, &mut out_data)?;
+
+        // let out_data = unsafe {
+        //     &memory.data_unchecked()[self.wasm_addr as usize..][..self.output_size as usize]
+        // };
+
+        let out_vec: Tensor = serde_json::from_slice(&out_data).unwrap();
         Ok(out_vec)
     }
 }
