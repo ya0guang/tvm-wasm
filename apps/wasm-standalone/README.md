@@ -61,6 +61,27 @@ It seems this memory region is compromised.
 
 ### Solution 1: update Runtime
 
+After updating the `wasmtime` to `0.28.0` and rewrite `graph.rs`, there is still an error, but it's a lot different.
+
+```sh
+original image dimensions: (256, 256)
+resized image dimensions: (224, 224)
+DEBUG: instantiate result: Err(WebAssembly failed to compile
+
+Caused by:
+    0: WebAssembly translation error
+    1: Invalid input WebAssembly code at offset 1578578: alignment must not be larger than natural)
+thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: WebAssembly failed to compile
+
+Caused by:
+    0: WebAssembly translation error
+    1: Invalid input WebAssembly code at offset 1578578: alignment must not be larger than natural', src/main.rs:87:12
+stack backtrace:
+   0:     0x559304857880 - std::backtrace_rs::backtrace::libunwind::trace::ha5edb8ba5c6b7a6c
+                               at /rustc/53cb7b09b00cbea8754ffb78e7e3cb521cb8af4b/library/std/src/../../backtrace/src/backtrace/libunwind.rs:90:5
+   1:     0x559304857880 - std::backtrace_rs::backtrace::trace_unsynchronized::h0de86d320a827db2
+                               at /rustc/53cb7b09b00cbea8754ffb78e7e3cb521cb8af4b/library/std/src/../../backtrace/src/back
+```
 
 
 # WebAssembly Standalone for Deep Learning Framework with TVM Runtime
