@@ -82,7 +82,9 @@ fn main() {
     let input = data_preprocess(img);
 
     let mut graph_exec = GraphExecutor::new();
-    graph_exec.instantiate(wasm_graph_file).unwrap();
+    let result = graph_exec.instantiate(wasm_graph_file);
+    println!("DEBUG: instantiate result: {:?}", result);
+    result.unwrap();
 
     // // little experiment
     let json_ser = serde_json::to_vec(&input).unwrap();
