@@ -83,6 +83,21 @@ stack backtrace:
                                at /rustc/53cb7b09b00cbea8754ffb78e7e3cb521cb8af4b/library/std/src/../../backtrace/src/back
 ```
 
+### Real Cause
+
+After digging deep inside this error, I found this error originates in `apps/wasm-standalone/wasm-graph/src/utils.rs`:
+```rs
+    let mut data_vec = Vec::new();
+    for i in 0..in_size {
+        data_vec.push(ptr::read(in_addr.offset(i as isize)));
+    }
+```
+The snippet above creates a new local vector and fills it byte by byte. 
+
+However, the memory seems to be compromised during vector data filling. This error may originates in the differences of memory management between the host(runtime) and WASM app. There is also a blog post introducing MM in WASM runtimes: [A practical guide to WebAssembly memory
+](https://radu-matei.com/blog/practical-guide-to-wasm-memory/s).
+
+> Maybe I should look deep inside the implementation of the MM-related interfaces of WASM runtimes.
 
 # WebAssembly Standalone for Deep Learning Framework with TVM Runtime
 

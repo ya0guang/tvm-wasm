@@ -45,7 +45,7 @@ impl GraphExecutor {
     }
 
     pub fn instantiate(&mut self, wasm_graph_file: String) -> Result<()> {
-        let engine = Engine::new(Config::new().wasm_simd(true)).unwrap();
+        let engine = Engine::default();
         // let store = Store::new(&engine);
 
         // First set up our linker which is going to be linking modules together. We
@@ -81,11 +81,16 @@ impl GraphExecutor {
 
         // Specify the wasm address to access the wasm memory.
         let wasm_addr = memory.data_size(self.store.as_mut().unwrap());
+        println!("DEBUG: data_size before grow: {:?}", wasm_addr);
         // Serialize the data into a JSON string.
         let in_data = serde_json::to_vec(&input_data)?;
         let in_size = in_data.len();
         // Grow up memory size according to in_size to avoid memory leak.
         memory.grow(self.store.as_mut().unwrap(), (in_size >> 16) as u32 + 1)?;
+        println!(
+            "DEBUG: data_size after grow: {:?}",
+            memory.data_size(self.store.as_mut().unwrap())
+        );
 
         // Insert the input data into wasm memory.
         // for i in 0..in_size {
@@ -93,7 +98,7 @@ impl GraphExecutor {
         //         memory.data_unchecked_mut()[wasm_addr + i] = *in_data.get(i).unwrap();
         //     }
         // }
-        memory.write(self.store.as_mut().unwrap(), wasm_addr, &in_data);
+        memory.write(self.store.as_mut().unwrap(), wasm_addr, &in_data)?;
 
         self.wasm_addr = wasm_addr as i32;
         self.input_size = in_size as i32;
@@ -101,6 +106,12 @@ impl GraphExecutor {
             "DEBUG, input addr: {:?}, size: {:?}",
             self.wasm_addr, self.input_size
         );
+
+        let mem_ptr = memory.data_ptr(self.store.as_mut().unwrap());
+        let bug_region = unsafe {
+            std::slice::from_raw_parts(((mem_ptr as usize) + wasm_addr + 95000) as *mut u8, 10)
+        };
+        println!("DEBUG: after set_input {:?}", bug_region);
 
         Ok(())
     }
@@ -113,8 +124,25 @@ impl GraphExecutor {
             .unwrap()
             .get_func(self.store.as_mut().unwrap(), "run")
             .ok_or_else(|| anyhow::format_err!("failed to find `run` function export!"))?;
-            // .wrap2_async::<i32, i32, i32>(self.store.unwrap())?;
-            // .get2::<i32, i32, i32>()?;
+        // .wrap2_async::<i32, i32, i32>(self.store.unwrap())?;
+        // .get2::<i32, i32, i32>()?;
+
+        // DEBUG
+        let memory = self
+            .instance
+            .as_ref()
+            .unwrap()
+            .get_memory(self.store.as_mut().unwrap(), "memory")
+            .ok_or_else(|| anyhow::format_err!("failed to find `memory` export"))?;
+        let mem_ptr = memory.data_ptr(self.store.as_mut().unwrap());
+        let bug_region = unsafe {
+            std::slice::from_raw_parts(
+                ((mem_ptr as usize) + (self.wasm_addr as usize) + 95000) as *mut u8,
+                10,
+            )
+        };
+        println!("DEBUG: in run {:?}", bug_region);
+
 
         let params = [Val::I32(self.wasm_addr), Val::I32(self.input_size)];
         let out_size = run.call(self.store.as_mut().unwrap(), &params[..])?;
@@ -136,7 +164,11 @@ impl GraphExecutor {
             .ok_or_else(|| anyhow::format_err!("failed to find `memory` export"))?;
 
         let mut out_data = vec![0 as u8; self.output_size as _];
-        memory.read(self.store.as_mut().unwrap(), self.wasm_addr as _, &mut out_data)?;
+        memory.read(
+            self.store.as_mut().unwrap(),
+            self.wasm_addr as _,
+            &mut out_data,
+        )?;
 
         // let out_data = unsafe {
         //     &memory.data_unchecked()[self.wasm_addr as usize..][..self.output_size as usize]

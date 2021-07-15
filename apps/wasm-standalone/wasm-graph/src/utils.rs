@@ -24,20 +24,34 @@ use std::ptr;
 pub unsafe fn load_input(in_addr: i32, in_size: usize) -> Tensor {
     let in_addr = in_addr as *mut u8;
 
-    let mut data_vec = Vec::new();
-    for i in 0..in_size {
-        data_vec.push(ptr::read(in_addr.offset(i as isize)));
-    }
+    println!("DEBUG: in_addr {:?}, in_size {:?}", in_addr, in_size);
+
+    let data_vec = unsafe { std::slice::from_raw_parts(in_addr, in_size) };
+
+    // let mut data_vec = Vec::new();
+    // for i in 0..in_size {
+    //     data_vec.push(ptr::read(in_addr.offset(i as isize)));
+    // }
     // println!("DEBUG: VOID");
 
     // data_vec[95004] = 44;
     // data_vec[95005] = 49;
     // data_vec[95006] = 54;
     // data_vec[95007] = 55;
-    println!("DEBUG: wasm_graph load_input data_vec: {:?}", &data_vec[95000..95010]);
+    println!(
+        "DEBUG: wasm_graph load_input data_vec: {:?}",
+        &data_vec[95000..95010]
+    );
     let input = serde_json::from_slice(&data_vec);
-
-    input.unwrap()
+    match input {
+        Ok(result) => {
+            println!("DEBUG: SER SUCCEED!!! and Ok");
+            result
+        }
+        Err(e) => {
+            panic!("DEBUG: SER SUCCEED!!! but Err, {:?}", &e);
+        }
+    }
 }
 
 pub unsafe fn store_output(out_addr: i32, output: Tensor) -> usize {
