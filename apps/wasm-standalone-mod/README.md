@@ -17,15 +17,17 @@
 
 This readme is for *modified* `wasm-standalone` example to record the problems and solutions in compiling & running TVM graph as a WebAssembly module.
 
+**Note:** Code in this directory works with latest TVM rather than this fork.
+
 # Debugging note
 
 ## **Unsolved** Bug: wasm trap: indirect call type mismatch
 
 This is a runtime error which occurs after the model can be successfully compiled to wasm and `wasm-graph` can deserialize input data correctly. Some issue/PRs in TVM are related to this problem, but it wasn't really get fixed yet:
 
-- [Issue](https://github.com/apache/tvm/issues/6816)
-- [PR](https://github.com/apache/tvm/pull/5489)
-- [PR](https://github.com/apache/tvm/pull/6886)
+- [Issue 6816](https://github.com/apache/tvm/issues/6816)
+- [PR 5489](https://github.com/apache/tvm/pull/5489)
+- [PR 6886](https://github.com/apache/tvm/pull/6886)
 
 The most related part in `tvm` is [`rust/tvm-graph-rt`](https://github.com/apache/tvm/tree/main/rust/tvm-graph-rt). It even contains a [test-wasm32](https://github.com/apache/tvm/tree/main/rust/tvm-graph-rt/tests/test_wasm32), but the test is commented in the [test scripts](https://github.com/apache/tvm/blob/main/tests/scripts/task_rust.sh#L75). Also, I cannot run the test successfully with the command written in this script. 
 
@@ -224,3 +226,21 @@ However, the memory seems to be compromised during vector data filling. This err
 - Pointers pointing to sandboxed data structures can be invalidated whenever the memory size of the sandbox changes.
 - Prepare enough memory (e.g. by `grow`) before passing input data, and use safe API (`Memory::write`) to pass data in. Please make sure to write data on the "growed memory" 
 
+## **Solved** Error: Model Doesn't Compile to `wasm32` target
+
+This problem can be easily solved using the latest TVM APIs or just adding a line in the Python script.
+
+- [updated script](https://github.com/ya0guang/tvm-wasm-teaclave/blob/wasm-debug/apps/wasm-standalone-mod/wasm-graph/tools/build_graph_lib.py): contains dead code, only for debug use
+
+### Alternative solution
+
+```py
+def _get_mod_and_params(model_file):
+    onnx_model = onnx.load(model_file)
+    shape_dict = {}
+    for input in onnx_model.graph.input:
+        shape_dict[input.name] = [dim.dim_value for dim in input.type.tensor_type.shape.dim]
+
+    shape_dict = {"data": shape_dict["data"]}
+    return relay.frontend.from_onnx(onnx_model, shape_dict)
+```
