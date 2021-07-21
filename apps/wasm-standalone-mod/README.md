@@ -1,27 +1,10 @@
-<!--- Licensed to the Apache Software Foundation (ASF) under one -->
-<!--- or more contributor license agreements.  See the NOTICE file -->
-<!--- distributed with this work for additional information -->
-<!--- regarding copyright ownership.  The ASF licenses this file -->
-<!--- to you under the Apache License, Version 2.0 (the -->
-<!--- "License"); you may not use this file except in compliance -->
-<!--- with the License.  You may obtain a copy of the License at -->
-
-<!---   http://www.apache.org/licenses/LICENSE-2.0 -->
-
-<!--- Unless required by applicable law or agreed to in writing, -->
-<!--- software distributed under the License is distributed on an -->
-<!--- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY -->
-<!--- KIND, either express or implied.  See the License for the -->
-<!--- specific language governing permissions and limitations -->
-<!--- under the License. -->
-
 This readme is for *modified* `wasm-standalone` example to record the problems and solutions in compiling & running TVM graph as a WebAssembly module.
 
 **Note:** Code in this directory works with latest TVM rather than this fork.
 
 # Debugging note
 
-## **Unsolved** Bug: wasm trap: indirect call type mismatch
+## **Partly Solved** Bug: wasm trap: indirect call type mismatch
 
 This is a runtime error which occurs after the model can be successfully compiled to wasm and `wasm-graph` can deserialize input data correctly. Some issue/PRs in TVM are related to this problem, but it wasn't really get fixed yet:
 
@@ -130,10 +113,110 @@ stack backtrace:
 note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
 ```
 
-### Analysis
+### Hot Fix
+
+With the help from my collages, I'm now able to run the two examples.
+
+#### Track the error message
+
+The error says "indirect call type mismatch", and the error site is at this function:
+
+```rs
+// @see `WrapPackedFunc` in `llvm_module.cc`.
+fn wrap_backend_packed_func(func_name: String, func: BackendPackedCFunc) -> Box<dyn PackedFunc> {
+    Box::new(move |args: &[ArgValue]| {
+        let (values, type_codes): (Vec<TVMValue>, Vec<i32>) = args
+            .iter()
+            .map(|arg| {
+                let (val, code) = arg.to_tvm_value();
+                (val, code as i32)
+            })
+            .unzip();
+        let ret: RetValue = RetValue::default();
+        let (mut ret_val, mut ret_type_code) = ret.to_tvm_value();
+
+        // Error occurs here
+        let exit_code = func(
+            values.as_ptr(),
+            type_codes.as_ptr(),
+            values.len() as i32,
+            &mut ret_val,
+            &mut ret_type_code,
+        );
+        if exit_code == 0 {
+            Ok(RetValue::from_tvm_value(ret_val, ret_type_code))
+        } else {
+            Err(tvm_sys::errors::FuncCallError::get_with_context(
+                func_name.clone(),
+            ))
+        }
+    })
+}
+```
+
+It's not hard to guess this snippet makes an indirect call to `func`, which is a `BackendPackedCFunc`, and this function calls to compiled WASM code. The definition of `BackendPackedCFunc` is in `rust/tvm-sys/src/lib.rs`: 
+
+```rs
+    pub type BackendPackedCFunc = extern "C" fn(
+        args: *const TVMValue,
+        type_codes: *const c_int,
+        num_args: c_int,
+        out_ret_value: *mut TVMValue,
+        out_ret_tcode: *mut u32,
+    ) -> c_int;
+```
+
+Therefore, there may be a extern function in WASM module whose signature doesn't match this definition.
+
+#### Digging the WASM File
+
+Here we take [the test](https://github.com/apache/tvm/tree/main/rust/tvm-graph-rt/tests/test_wasm32) as an example.
+
+The compiled module looks like [this](./test.wat).  
+
+Function `$f6` invokes `$env.TVMBackendRegisterSystemLibSymbol`, which seems to export two symbols, `__tvm_module_ctx` and `default_function` (at 2882, it's very strange there are two `default_function`s in data segment).
+
+Indeed, none of the functions in WASM module has the same signature with `BackendPackedCFunc`. The most close one takes 6 parameters. So what if we pass 6 parameters to `func`? We modify `rust/tvm-graph-rt/src/module/mod.rs`: adding a new function type and forcely passing 6 parameters to func.
+
+```rs
+pub type BackendPackedCFuncMod = extern "C" fn(
+    args: *const TVMValue,
+    type_codes: *const c_int,
+    num_args: c_int,
+    out_ret_value: *mut TVMValue,
+    out_ret_tcode: *mut u32,
+    additional: c_int,
+) -> c_int;
+
+// Some code
+
+        let func_mod: BackendPackedCFuncMod = unsafe {std::mem::transmute(func)};
+
+        let exit_code = func_mod(
+            values.as_ptr(),
+            type_codes.as_ptr(),
+            values.len() as i32,
+            &mut ret_val,
+            &mut ret_type_code,
+            0,
+        );
+
+```
+
+Then it works!!!!!!!
+
+### In-depth Analysis
 
 As mentioned in [this PR](https://github.com/apache/tvm/pull/6886) and [related issue](https://github.com/apache/tvm/issues/6816), TVM may has compatibility problem with WASI ABI.  
-To solve this problem, we may need to figure out the root cause in ABI level first.  
+~~To solve this problem, we may need to figure out the root cause in ABI level first.~~
+
+Although the `test_wasm32` and `wasm-standalone` can be executed with no error for now, the root cause of this problem is unclear. We still need to answer the following questions:
+
+- How is the `default_function` compiled? Why it's taking 6 parameters in WASM but `BackendPackedCFunc` only takes 5 parameters?
+- What's the exact calling convention of TVM?
+- How the functions compiled by TVM packed and wrapped?
+- Will there be type confusion problems in WASM/TVM?
+
 
 ## **Solved** Bug: Modified bytes in deserialization 
 
