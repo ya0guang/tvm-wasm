@@ -207,6 +207,10 @@ Then it works!!!!!!!
 
 ### In-depth Analysis
 
+#### LLVM Compiled IR
+
+Please see [this](./test.ll).
+
 As mentioned in [this PR](https://github.com/apache/tvm/pull/6886) and [related issue](https://github.com/apache/tvm/issues/6816), TVM may has compatibility problem with WASI ABI.  
 ~~To solve this problem, we may need to figure out the root cause in ABI level first.~~
 
